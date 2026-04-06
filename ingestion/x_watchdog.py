@@ -51,7 +51,11 @@ def parse_grok_response(data: dict[str, Any]) -> list[dict[str, Any]]:
             content = re.sub(r"^```\w*\n?", "", content)
             content = re.sub(r"\n?```$", "", content)
         return json.loads(content)
-    except (KeyError, IndexError, json.JSONDecodeError):
+    except (KeyError, IndexError) as exc:
+        logger.warning("parse_grok_response: missing field in Grok payload: %s | raw=%r", exc, data)
+        return []
+    except json.JSONDecodeError as exc:
+        logger.warning("parse_grok_response: JSONDecodeError: %s | content=%r", exc, content[:500] if 'content' in locals() else None)
         return []
 
 def extract_tickers(text: str) -> list[str]:

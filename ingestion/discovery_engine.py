@@ -43,6 +43,31 @@ PROPOSE_THRESHOLD: float = 40.0
 # promoted further by the engine. Only human intervention can change them.
 TERMINAL_STATES = frozenset({"auto_added", "rejected", "expired"})
 
+# SPEC-028B §5 per-source base scores
+X_TIER_SCORES: dict[int, float] = {1: 20.0, 2: 10.0, 3: 2.0, 4: 2.0}
+EDGAR_FORM_SCORES: dict[str, float] = {
+    "S-1": 50.0, "S-1/A": 50.0, "F-1": 50.0, "F-1/A": 50.0,
+    "13-F": 30.0, "13F-HR": 30.0, "13F-HR/A": 30.0,
+    "D": 20.0, "D/A": 20.0,
+}
+POLYMARKET_NEW_MARKET_SCORE: float = 25.0
+LAST30DAYS_MENTION_SCORE: float = 15.0
+
+# SPEC-028B §2 Source 3 — AI-adjacency keywords for EDGAR filing discovery
+AI_ADJACENT_KEYWORDS: frozenset[str] = frozenset({
+    "artificial intelligence", "machine learning", "neural network",
+    "large language model", "generative ai", "foundation model",
+    "deep learning", "transformer model", "llm",
+})
+
+
+def is_ai_adjacent(text: str) -> bool:
+    """True if the text contains any SPEC-028B AI-adjacency keyword."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(kw in lowered for kw in AI_ADJACENT_KEYWORDS)
+
 
 class DiscoveryEngine:
     """Score aggregator + ZHGP state machine for discovery candidates."""
@@ -139,6 +164,51 @@ class DiscoveryEngine:
 
         self._evaluate_thresholds(candidate)
         return candidate
+
+    # ------------------------------------------------------------------
+    # Task 3 convenience wrappers — per-source helpers used by scanners
+    # ------------------------------------------------------------------
+
+    def ingest_x_ticker(
+        self, ticker: str, handle: str, tier: int, evidence: str = ""
+    ) -> DiscoveryCandidate:
+        """X Watchdog: a `$TICKER` mention from an account of given tier."""
+        score = X_TIER_SCORES.get(tier, 2.0)
+        return self.process_signal(
+            entity_name=ticker,
+            entity_type="ticker",
+            source="x_watchdog",
+            signal_score=score,
+            details={"handle": handle, "tier": tier},
+            evidence=evidence or f"@{handle.lstrip('@')}",
+        )
+
+    def ingest_edgar_entity(
+        self, entity_name: str, form_type: str, filing_url: str, summary: str = ""
+    ) -> DiscoveryCandidate:
+        """EDGAR Scanner: AI-adjacent non-target filing detected."""
+        score = EDGAR_FORM_SCORES.get(form_type, 10.0)
+        return self.process_signal(
+            entity_name=entity_name,
+            entity_type="private_company",
+            source="edgar",
+            signal_score=score,
+            details={"form_type": form_type, "filing_url": filing_url},
+            evidence=f"{form_type} filing: {filing_url}",
+        )
+
+    def ingest_polymarket_entity(
+        self, entity_name: str, market_title: str, market_id: str = ""
+    ) -> DiscoveryCandidate:
+        """Polymarket Engine: entity referenced by a newly-detected market."""
+        return self.process_signal(
+            entity_name=entity_name,
+            entity_type="unknown",
+            source="polymarket",
+            signal_score=POLYMARKET_NEW_MARKET_SCORE,
+            details={"market_title": market_title, "market_id": market_id},
+            evidence=f"Polymarket: {market_title}",
+        )
 
     # ------------------------------------------------------------------
     # State machine

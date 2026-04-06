@@ -9,6 +9,8 @@ import feedparser
 from sqlalchemy.orm import Session
 from blackpine_signals.db.models import EdgarFiling
 from blackpine_signals.ipo.pipeline import advance_stage
+# SPEC-028B Task 3: discovery handoff
+from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine, is_ai_adjacent
 
 logger = logging.getLogger("bps.edgar_scanner")
 EDGAR_RSS_FEED = "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&type=S-1&dateb=&owner=include&count=40&search_text=&action=getcompany&output=atom"
@@ -39,9 +41,12 @@ def parse_edgar_rss_entry(entry: dict[str, Any]) -> dict[str, Any] | None:
             "filed_date": entry.get("updated", "")}
 
 class EdgarScanner:
-    def __init__(self, session_factory: Callable[[], Session], targets: list[str] | None = None) -> None:
+    def __init__(self, session_factory: Callable[[], Session], targets: list[str] | None = None,
+                 discovery_engine_factory: Callable[[Session], DiscoveryEngine] | None = None) -> None:
         self.session_factory = session_factory
         self.targets = targets or ["Anthropic", "OpenAI", "xAI", "SpaceX", "Groq", "CoreWeave", "Databricks", "Stripe", "Canva", "Figma"]
+        # SPEC-028B Task 3: optional discovery engine factory
+        self.discovery_engine_factory = discovery_engine_factory
 
     async def scan(self) -> int:
         feed = feedparser.parse(EDGAR_RSS_FEED)
@@ -72,6 +77,32 @@ class EdgarScanner:
                 if is_target and classification in FORM_TO_IPO_STAGE:
                     advance_stage(session, parsed["entity_name"], FORM_TO_IPO_STAGE[classification],
                         trigger_source="edgar_scanner", evidence=f"{parsed['form_type']} filing: {parsed['filing_url']}")
+                # SPEC-028B Task 3: non-target AI-adjacent discovery
+                if (
+                    not is_target
+                    and self.discovery_engine_factory is not None
+                    and classification in ("ipo_primary", "institutional_holdings", "exempt_offering")
+                    and is_ai_adjacent((parsed.get("summary") or "") + " " + parsed["entity_name"])
+                ):
+                    try:
+                        engine = self.discovery_engine_factory(session)
+                        engine.ingest_edgar_entity(
+                            entity_name=parsed["entity_name"],
+                            form_type=parsed["form_type"],
+                            filing_url=parsed["filing_url"],
+                            summary=parsed.get("summary") or "",
+                        )
+                        # S-1/F-1 → also auto-seed IPO pipeline at Filed stage
+                        if classification == "ipo_primary":
+                            advance_stage(
+                                session, parsed["entity_name"], "filed",
+                                trigger_source="edgar_scanner+discovery",
+                                evidence=f"AI-adjacent {parsed['form_type']}: {parsed['filing_url']}",
+                            )
+                    except Exception:
+                        logger.exception(
+                            "Discovery ingest failed for EDGAR entity %s", parsed["entity_name"]
+                        )
             session.commit()
             return inserted
         finally:

@@ -6,7 +6,15 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 from sqlalchemy.orm import Session
-from blackpine_signals.db.models import PolymarketCorrelation, PolymarketSignal
+from blackpine_signals.db.models import (
+    DiscoveryCandidate,
+    IPOPipeline,
+    PolymarketCorrelation,
+    PolymarketSignal,
+    WatchlistTicker,
+)
+# SPEC-028B Task 3: discovery handoff
+from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine
 
 logger = logging.getLogger("bps.polymarket_engine")
 
@@ -28,10 +36,23 @@ def format_polysignal(market_title: str, odds: float, delta: float,
     lines.append(f"└─ 📊 Polymarket volume: ${volume_24h:,.0f} (24h)")
     return "\n".join(lines)
 
+# SPEC-028B §2 Source 4 — AI/tech keywords for new-market discovery
+DISCOVERY_KEYWORDS: list[str] = [
+    "AI", "artificial intelligence", "OpenAI", "Anthropic", "NVIDIA",
+    "IPO", "large language model", "AGI",
+]
+
+
 class PolymarketEngine:
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], Session],
+        discovery_engine_factory: Callable[[Session], DiscoveryEngine] | None = None,
+    ) -> None:
         self.session_factory = session_factory
         self._poller = None
+        # SPEC-028B Task 3: optional discovery engine factory
+        self.discovery_engine_factory = discovery_engine_factory
 
     async def _get_poller(self):
         if self._poller is None:
@@ -85,5 +106,67 @@ class PolymarketEngine:
                         logger.exception("Failed to scan market %s", corr.market_id)
             session.commit()
             return alerts
+        finally:
+            session.close()
+
+    # ------------------------------------------------------------------
+    # SPEC-028B §2 Source 4 / Task 3
+    # ------------------------------------------------------------------
+    async def discover_new_markets(
+        self, keywords: list[str] | None = None, limit_per_keyword: int = 10
+    ) -> int:
+        """Poll Polymarket for events matching AI/tech keywords; feed any
+        entity references not already in the watchlist, IPO pipeline, or
+        discovery candidates into the discovery engine.
+
+        Returns the number of new candidates created.
+        """
+        if self.discovery_engine_factory is None:
+            logger.info("polymarket discover_new_markets: no discovery engine wired, skipping")
+            return 0
+        kws = keywords or DISCOVERY_KEYWORDS
+        session = self.session_factory()
+        created = 0
+        try:
+            known_tickers = {row[0] for row in session.query(WatchlistTicker.symbol).all()}
+            known_ipo = {row[0] for row in session.query(IPOPipeline.company_name).all()}
+            known_cand = {row[0] for row in session.query(DiscoveryCandidate.entity_name).all()}
+            known = known_tickers | known_ipo | known_cand
+
+            poller = await self._get_poller()
+            engine = self.discovery_engine_factory(session)
+            async with poller:
+                for kw in kws:
+                    try:
+                        events = await poller.search_events(kw, limit=limit_per_keyword)
+                    except Exception:
+                        logger.exception("polymarket search failed for keyword %s", kw)
+                        continue
+                    if not events:
+                        continue
+                    for event in events if isinstance(events, list) else [events]:
+                        if not isinstance(event, dict):
+                            continue
+                        title = event.get("title") or event.get("question") or ""
+                        market_id = str(event.get("id") or event.get("market_id") or "")
+                        # Crude entity extraction — title itself is the candidate.
+                        # Skip if entity is already known (ticker, ipo, candidate).
+                        entity = title.strip()
+                        if not entity or entity in known:
+                            continue
+                        try:
+                            engine.ingest_polymarket_entity(
+                                entity_name=entity,
+                                market_title=title,
+                                market_id=market_id,
+                            )
+                            known.add(entity)
+                            created += 1
+                        except Exception:
+                            logger.exception(
+                                "Discovery ingest failed for polymarket entity %s", entity
+                            )
+            session.commit()
+            return created
         finally:
             session.close()

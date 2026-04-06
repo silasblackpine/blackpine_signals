@@ -15,6 +15,8 @@ from blackpine_signals.db.models import WatchlistTicker, XSignal
 from blackpine_signals.models.credibility import classify_signal, compute_weighted_score, get_credibility_tier
 # SPEC-028B Task 3: optional discovery hook
 from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine
+# SPEC-028B Task 5b: optional ticker validation before scoring
+from blackpine_signals.ingestion.symbol_validator import SymbolValidator
 
 logger = logging.getLogger("bps.x_watchdog")
 XAI_BASE = "https://api.x.ai/v1/chat/completions"
@@ -64,7 +66,8 @@ def extract_tickers(text: str) -> list[str]:
 class XWatchdog:
     def __init__(self, api_key: str, session_factory: Callable[[], Session],
                  accounts: list[str] | None = None, topics: list[str] | None = None,
-                 discovery_engine_factory: Callable[[Session], DiscoveryEngine] | None = None) -> None:
+                 discovery_engine_factory: Callable[[Session], DiscoveryEngine] | None = None,
+                 symbol_validator: SymbolValidator | None = None) -> None:
         self.api_key = api_key
         self.session_factory = session_factory
         self.accounts = accounts or DEFAULT_ACCOUNTS
@@ -72,6 +75,10 @@ class XWatchdog:
         # SPEC-028B Task 3: optional discovery engine factory.
         # Scanners remain standalone-runnable if no discovery hook is wired.
         self.discovery_engine_factory = discovery_engine_factory
+        # SPEC-028B Task 5b: optional symbol validator. If provided, garbage
+        # tickers (e.g. $WAGMI, $LFG) are filtered out before discovery
+        # scoring. None = unknown (validator missing key) → accept.
+        self.symbol_validator = symbol_validator
 
     async def _query_grok(self) -> dict[str, Any]:
         prompt = WATCHDOG_PROMPT.format(
@@ -131,19 +138,20 @@ class XWatchdog:
 
             # SPEC-028B Task 3: hand unknown tickers to the discovery engine.
             if self.discovery_engine_factory and scan_cycle_mentions:
-                self._emit_discoveries(session, scan_cycle_mentions)
+                await self._emit_discoveries(session, scan_cycle_mentions)
 
             return inserted
         finally:
             session.close()
 
     # ------------------------------------------------------------------
-    # SPEC-028B Task 3
+    # SPEC-028B Task 3 + Task 5b
     # ------------------------------------------------------------------
-    def _emit_discoveries(
+    async def _emit_discoveries(
         self, session: Session, mentions: list[tuple[str, str, int]]
     ) -> None:
-        """Cross-reference tickers against watchlist; feed unknowns to discovery."""
+        """Cross-reference tickers against watchlist; optionally validate
+        each unknown via SymbolValidator; feed survivors to discovery."""
         if self.discovery_engine_factory is None:
             return
         # Fetch all known symbols once
@@ -156,6 +164,35 @@ class XWatchdog:
         ]
         if not unknown_mentions:
             return
+
+        # SPEC-028B Task 5b: validate each unknown ticker against AlphaVantage
+        # SYMBOL_SEARCH before scoring it. validator.validate() returns:
+        #   True  → real ticker, accept
+        #   False → garbage (e.g. $WAGMI), reject
+        #   None  → couldn't determine (no key, network error), accept
+        if self.symbol_validator is not None:
+            validated: list[tuple[str, str, int]] = []
+            # Dedup tickers in this batch — same ticker can appear in multiple
+            # posts; we only need to validate it once per scan cycle.
+            seen_validation: dict[str, bool | None] = {}
+            for ticker, handle, tier in unknown_mentions:
+                if ticker not in seen_validation:
+                    try:
+                        seen_validation[ticker] = await self.symbol_validator.validate(ticker)
+                    except Exception:
+                        logger.exception("symbol_validator failed for $%s", ticker)
+                        seen_validation[ticker] = None  # treat as unknown → accept
+                if seen_validation[ticker] is False:
+                    logger.info(
+                        "symbol_validator rejected $%s — skipping discovery scoring",
+                        ticker,
+                    )
+                    continue
+                validated.append((ticker, handle, tier))
+            unknown_mentions = validated
+            if not unknown_mentions:
+                return
+
         engine = self.discovery_engine_factory(session)
         for ticker, handle, tier in unknown_mentions:
             try:

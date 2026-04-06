@@ -121,6 +121,130 @@ def test_xwatchdog_unknown_tickers_flow_to_discovery(seeded_watchlist):
     s.close()
 
 
+def test_xwatchdog_validator_filters_garbage_tickers(seeded_watchlist):
+    """SPEC-028B Task 5b: SymbolValidator rejects garbage; only real
+    tickers reach the discovery engine."""
+    eng, Session = seeded_watchlist
+
+    # Two unknown tickers: PLTR (real) and WAGMI (garbage)
+    fake_grok = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '[{"handle": "EricNewcomer", "text": "Loving $PLTR and $WAGMI today",'
+                        ' "likes": 5000, "reposts": 200, "url": "https://x.com/e/100",'
+                        ' "posted_at": "2026-04-06T10:00:00+00:00"}]'
+                    )
+                }
+            }
+        ]
+    }
+
+    # Build a stub validator: PLTR=True, WAGMI=False
+    from blackpine_signals.ingestion.symbol_validator import SymbolValidator
+    decisions = {"PLTR": True, "WAGMI": False}
+    async def fake_http(url, params=None, timeout=None):
+        kw = (params or {}).get("keywords", "")
+        if decisions.get(kw) is True:
+            return {"bestMatches": [{
+                "1. symbol": kw, "3. type": "Equity", "9. matchScore": "1.0000"
+            }]}
+        return {"bestMatches": []}
+    validator = SymbolValidator(api_key="demo", http_get=fake_http)
+
+    watchdog = XWatchdog(
+        api_key="test-key",
+        session_factory=Session,
+        discovery_engine_factory=make_discovery_factory(),
+        symbol_validator=validator,
+    )
+    with patch.object(XWatchdog, "_query_grok", new=AsyncMock(return_value=fake_grok)):
+        asyncio.run(watchdog.scan())
+
+    s = Session()
+    cands = {c.entity_name: c for c in s.query(DiscoveryCandidate).all()}
+    assert "PLTR" in cands  # validated → admitted
+    assert "WAGMI" not in cands  # rejected → filtered
+    s.close()
+
+
+def test_xwatchdog_validator_unknown_result_admits_ticker(seeded_watchlist):
+    """SPEC-028B Task 5b: validator returning None (e.g. missing API key,
+    network error) is treated as 'unknown → accept'."""
+    eng, Session = seeded_watchlist
+    fake_grok = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '[{"handle": "EricNewcomer", "text": "$XYZ is moving",'
+                        ' "likes": 1, "reposts": 1, "url": "https://x.com/e/200",'
+                        ' "posted_at": "2026-04-06T10:00:00+00:00"}]'
+                    )
+                }
+            }
+        ]
+    }
+    from blackpine_signals.ingestion.symbol_validator import SymbolValidator
+    # validator with no API key → validate() returns None
+    validator = SymbolValidator(api_key="")
+    watchdog = XWatchdog(
+        api_key="test-key",
+        session_factory=Session,
+        discovery_engine_factory=make_discovery_factory(),
+        symbol_validator=validator,
+    )
+    with patch.object(XWatchdog, "_query_grok", new=AsyncMock(return_value=fake_grok)):
+        asyncio.run(watchdog.scan())
+    s = Session()
+    assert s.query(DiscoveryCandidate).filter_by(entity_name="XYZ").one() is not None
+    s.close()
+
+
+def test_xwatchdog_validator_dedupes_within_scan_cycle(seeded_watchlist):
+    """SPEC-028B Task 5b: same ticker mentioned N times in one scan should
+    only call validate() once."""
+    eng, Session = seeded_watchlist
+    fake_grok = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '[{"handle": "EricNewcomer", "text": "$PLTR pump",'
+                        ' "likes": 100, "reposts": 5, "url": "https://x.com/e/301",'
+                        ' "posted_at": "2026-04-06T10:00:00+00:00"},'
+                        '{"handle": "NirantK", "text": "$PLTR again",'
+                        ' "likes": 50, "reposts": 2, "url": "https://x.com/n/302",'
+                        ' "posted_at": "2026-04-06T10:01:00+00:00"},'
+                        '{"handle": "Techmeme", "text": "$PLTR third mention",'
+                        ' "likes": 200, "reposts": 10, "url": "https://x.com/t/303",'
+                        ' "posted_at": "2026-04-06T10:02:00+00:00"}]'
+                    )
+                }
+            }
+        ]
+    }
+    from blackpine_signals.ingestion.symbol_validator import SymbolValidator
+    call_count = {"n": 0}
+    async def fake_http(url, params=None, timeout=None):
+        call_count["n"] += 1
+        return {"bestMatches": [{
+            "1. symbol": "PLTR", "3. type": "Equity", "9. matchScore": "1.0000"
+        }]}
+    validator = SymbolValidator(api_key="demo", http_get=fake_http)
+    watchdog = XWatchdog(
+        api_key="test-key",
+        session_factory=Session,
+        discovery_engine_factory=make_discovery_factory(),
+        symbol_validator=validator,
+    )
+    with patch.object(XWatchdog, "_query_grok", new=AsyncMock(return_value=fake_grok)):
+        asyncio.run(watchdog.scan())
+    # Three mentions of $PLTR but only ONE validate() HTTP call (within-cycle dedup)
+    assert call_count["n"] == 1
+
+
 def test_xwatchdog_without_discovery_factory_is_noop(seeded_watchlist):
     """Scanner must keep working when no discovery hook is wired."""
     eng, Session = seeded_watchlist

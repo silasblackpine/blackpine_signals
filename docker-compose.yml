@@ -1,0 +1,22 @@
+version: "3.8"
+services:
+  bps-db:
+    image: postgres:16-alpine
+    container_name: bps-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5434:5432"
+    environment:
+      POSTGRES_DB: blackpine_signals
+      POSTGRES_USER: bps_user
+      POSTGRES_PASSWORD: bps_pass
+    volumes:
+      - bps_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bps_user -d blackpine_signals"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  bps_pgdata:

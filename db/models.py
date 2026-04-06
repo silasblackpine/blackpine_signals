@@ -336,3 +336,64 @@ class APIUsage(Base):
         primaryjoin="APIUsage.api_key == foreign(Subscriber.api_key)",
         viewonly=True,
     )
+
+
+# ---------------------------------------------------------------------------
+# 12. DiscoveryCandidate  (SPEC-028B Task 1)
+# Governing docs:
+#   /documents/2026-04-05-spec-028b-auto-discovery-zhgp.md §4
+#   /documents/2026-04-06-spec-028b-phase2-implementation-plan.md §4 Task 1
+# ---------------------------------------------------------------------------
+class DiscoveryCandidate(Base):
+    __tablename__ = "discovery_candidates"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('ticker', 'private_company', 'fund', 'unknown')",
+            name="ck_discovery_candidates_entity_type",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'auto_added', 'proposed', 'rejected', 'expired')",
+            name="ck_discovery_candidates_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_name: Mapped[str] = mapped_column(String(256), nullable=False, unique=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    proposed_ticker: Mapped[Optional[str]] = mapped_column(String(16), index=True)
+    discovery_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0, index=True)
+    source_signals: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending", index=True
+    )
+    action_taken: Mapped[Optional[str]] = mapped_column(String(256))
+    action_taken_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+# ---------------------------------------------------------------------------
+# 13. DiscoveryLog  (SPEC-028B Task 1)
+# Governing docs:
+#   /documents/2026-04-05-spec-028b-auto-discovery-zhgp.md §4
+#   /documents/2026-04-06-spec-028b-phase2-implementation-plan.md §4 Task 1
+# ---------------------------------------------------------------------------
+class DiscoveryLog(Base):
+    __tablename__ = "discovery_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    entity_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    automated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )

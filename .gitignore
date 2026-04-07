@@ -58,3 +58,6 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Local dev scripts — manual utilities, not committed
+scripts/

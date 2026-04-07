@@ -93,18 +93,76 @@ IPO_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 
-# Stop-words for the COMPANY_PATTERN — these are frequent proper-noun matches
-# that are almost never real company names worth tracking.
+# Stop-words for the COMPANY_PATTERN — frequent proper-noun matches that
+# are almost never real company names worth tracking. Grouped by source:
+#
+#   - Geography / institutions
+#   - Generic technology phrases that get title-cased
+#   - News / media outlets (re-mentions, not primary targets)
+#   - Days / months
+#   - Markdown section headers and summary labels produced by /last30days
+#     (these are the noise source fixed 2026-04-07 after the first live run)
 COMPANY_STOPWORDS: frozenset[str] = frozenset({
+    # Geography / institutions
     "United States", "United Kingdom", "New York", "Wall Street", "Silicon Valley",
+    "Federal Reserve",
+    # Generic tech phrases
     "Artificial Intelligence", "Machine Learning", "Large Language",
-    "Federal Reserve", "Black Pine", "Hacker News", "Reuters", "Bloomberg",
+    "Deep Learning", "Foundation Model", "Neural Network",
+    # Lab + news outlets
+    "Black Pine", "Hacker News", "Reuters", "Bloomberg", "Techmeme",
     "The New York Times", "The Wall Street Journal", "CNBC", "Financial Times",
-    "Reddit", "Twitter", "YouTube", "TikTok", "Instagram",
+    "Business Insider", "The Information", "The Verge", "Wired", "Forbes",
+    "Axios", "Semafor",
+    "Reddit", "Twitter", "YouTube", "TikTok", "Instagram", "LinkedIn",
+    # Days / months
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
     "January", "February", "March", "April", "May", "June", "July", "August",
     "September", "October", "November", "December",
+    # Markdown section labels / metric headers from /last30days output
+    # (identified 2026-04-07 in the first live trigger_research_now.py run)
+    "Score", "Scores", "Engagement", "Engagements", "Relevance",
+    "Reports", "Report", "Date", "Dates", "Highlights", "Findings",
+    "Summary", "Overview", "Metrics", "Statistics", "Analysis",
+    "Recommendation", "Recommendations", "Conclusion", "Conclusions",
+    "Introduction", "Background", "Context", "Methodology", "Notes",
+    "Sources", "Citations", "References", "Appendix", "Discussion",
+    "Key Takeaways", "Top Posts", "Top Comments", "Top Results",
+    "Research", "Insight", "Insights", "Findings Summary",
+    # Generic common words that get CamelCased in headers
+    "Post", "Posts", "Thread", "Threads", "Comment", "Comments",
+    "Likes", "Reposts", "Shares", "Views", "Mentions",
 })
+
+
+def strip_markdown_headers(text: str) -> str:
+    """Remove lines that are markdown headers (`#`, `##`, `###`, …).
+
+    /last30days produces a lot of section structure — "## Score", "## Engagement",
+    "## Relevance", etc. Those headers polluted the first live ZHGP run because
+    COMPANY_PATTERN would match the header label as a "company name" whenever
+    the 200-char co-location window happened to contain an IPO keyword.
+    Stripping header lines eliminates an entire class of false positives
+    without touching the real prose content of the document.
+
+    Also strips markdown table header rows (lines of only `|`, `-`, `:` and
+    whitespace) and horizontal rules (`---`, `***`, `___`).
+    """
+    if not text:
+        return text
+    cleaned_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        # Table separator like `| --- | --- |`
+        if stripped and set(stripped).issubset(set("|-: \t")):
+            continue
+        # Horizontal rule
+        if stripped in ("---", "***", "___"):
+            continue
+        cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
 
 
 def extract_tickers_from_text(text: str) -> set[str]:
@@ -121,17 +179,27 @@ def extract_ipo_company_mentions(text: str, window: int = 200) -> set[str]:
     discovery candidate when it is co-located with IPO-context language
     (S-1, pre-IPO, filed for, etc.). Otherwise any capitalized pair of
     words would flood the discovery pipeline.
+
+    As of 2026-04-07 the text is pre-cleaned via `strip_markdown_headers`
+    so `/last30days` section labels can't contaminate the extraction.
     """
     if not text:
         return set()
+    cleaned = strip_markdown_headers(text)
     matches: set[str] = set()
-    for ipo_m in IPO_CONTEXT.finditer(text):
+    for ipo_m in IPO_CONTEXT.finditer(cleaned):
         start = max(0, ipo_m.start() - window)
-        end = min(len(text), ipo_m.end() + window)
-        chunk = text[start:end]
+        end = min(len(cleaned), ipo_m.end() + window)
+        chunk = cleaned[start:end]
         for name_m in COMPANY_PATTERN.finditer(chunk):
             name = name_m.group(1).strip()
             if name in COMPANY_STOPWORDS:
+                continue
+            # Also reject if the first token is a stop-word (e.g.
+            # "Highlights Crusoe AI" where "Highlights" is a header label
+            # that got glued onto a real company name).
+            first_word = name.split()[0] if name else ""
+            if first_word in COMPANY_STOPWORDS:
                 continue
             if len(name) < 4:  # reject very short matches
                 continue

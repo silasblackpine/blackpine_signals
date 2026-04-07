@@ -22,6 +22,7 @@ from blackpine_signals.ingestion.discovery_research import (
     TOPICS_PER_DAY,
     extract_ipo_company_mentions,
     extract_tickers_from_text,
+    strip_markdown_headers,
     topics_for_day,
 )
 
@@ -102,6 +103,99 @@ def test_company_stopwords_contains_expected():
     assert "Wall Street" in COMPANY_STOPWORDS
     assert "United States" in COMPANY_STOPWORDS
     assert "Hacker News" in COMPANY_STOPWORDS
+
+
+def test_company_stopwords_includes_markdown_header_noise():
+    """2026-04-07 ZHGP run regression — these polluted the DB."""
+    for label in (
+        "Score", "Engagement", "Relevance", "Reports", "Date",
+        "Highlights", "Findings", "Summary", "Techmeme", "Bloomberg",
+        "Reuters",
+    ):
+        assert label in COMPANY_STOPWORDS, f"{label!r} missing from COMPANY_STOPWORDS"
+
+
+# ---------------------------------------------------------------------------
+# strip_markdown_headers — the 2026-04-07 data-cleanliness fix
+# ---------------------------------------------------------------------------
+
+def test_strip_markdown_headers_removes_atx_headers():
+    text = (
+        "# Top-level\n"
+        "## Subsection\n"
+        "### Sub-sub\n"
+        "Actual prose line.\n"
+    )
+    assert strip_markdown_headers(text) == "Actual prose line."
+
+
+def test_strip_markdown_headers_removes_table_separator():
+    text = (
+        "| col1 | col2 |\n"
+        "| --- | --- |\n"
+        "| a | b |\n"
+    )
+    cleaned = strip_markdown_headers(text)
+    assert "---" not in cleaned
+    assert "| col1 | col2 |" in cleaned
+    assert "| a | b |" in cleaned
+
+
+def test_strip_markdown_headers_removes_horizontal_rule():
+    assert strip_markdown_headers("prose\n---\nmore prose") == "prose\nmore prose"
+
+
+def test_strip_markdown_headers_preserves_empty_string():
+    assert strip_markdown_headers("") == ""
+    assert strip_markdown_headers(None or "") == ""
+
+
+def test_strip_markdown_headers_preserves_prose_with_hash_inside():
+    """A `#` in the middle of a line is not a header — must NOT be stripped."""
+    text = "The stock rose #1 today and #2 tomorrow."
+    assert strip_markdown_headers(text) == text
+
+
+# ---------------------------------------------------------------------------
+# extract_ipo_company_mentions — regression against live-run noise
+# ---------------------------------------------------------------------------
+
+def test_extract_ipo_companies_rejects_markdown_section_labels():
+    """The exact noise pattern observed in the 2026-04-07 live trigger run:
+    section headers near IPO-context keywords must not be treated as companies.
+    """
+    text = (
+        "# Research: AI infrastructure companies\n"
+        "\n"
+        "## Score\n"
+        "## Engagement\n"
+        "## Relevance\n"
+        "\n"
+        "Databricks filed for S-1 this week in a blockbuster deal.\n"
+        "CoreWeave is going public next month.\n"
+        "\n"
+        "## Reports\n"
+        "## Date\n"
+        "## Highlights Crusoe AI\n"
+    )
+    companies = extract_ipo_company_mentions(text)
+    # Real companies should still be caught
+    assert any("Databricks" in c for c in companies)
+    assert any("CoreWeave" in c for c in companies)
+    # Header labels must NOT be caught
+    for noise in ("Score", "Engagement", "Relevance", "Reports", "Date", "Highlights"):
+        assert noise not in companies, f"{noise!r} leaked through"
+    # The "Highlights Crusoe AI" multi-word match must be rejected because
+    # its first token is a stop-word — even though "Crusoe" is real.
+    assert "Highlights Crusoe AI" not in companies
+
+
+def test_extract_ipo_companies_rejects_news_outlets():
+    text = "Techmeme reports Databricks filed for IPO. Bloomberg broke the story first."
+    companies = extract_ipo_company_mentions(text)
+    assert "Techmeme" not in companies
+    assert "Bloomberg" not in companies
+    assert any("Databricks" in c for c in companies)
 
 
 # ---------------------------------------------------------------------------

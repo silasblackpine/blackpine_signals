@@ -22,9 +22,11 @@ from blackpine_signals.config import settings
 from blackpine_signals.db.engine import engine, get_session
 from blackpine_signals.db.models import Base, FusedSignal, IPOPipeline, WatchlistTicker
 from blackpine_signals.db.seed import seed_database
+from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine
 from blackpine_signals.ingestion.edgar_scanner import EdgarScanner
 from blackpine_signals.ingestion.polymarket_engine import PolymarketEngine
 from blackpine_signals.ingestion.price_engine import PriceEngine
+from blackpine_signals.ingestion.symbol_validator import SymbolValidator
 from blackpine_signals.ingestion.x_watchdog import XWatchdog
 
 logger = logging.getLogger("bps")
@@ -102,15 +104,36 @@ async def startup() -> None:
         api_key=settings.alpha_vantage_api_key,
         session_factory=get_session,
     )
+
+    # SPEC-028B Task 5b: shared symbol validator + discovery engine factory.
+    # - SymbolValidator wraps AlphaVantage SYMBOL_SEARCH (24h LRU cache,
+    #   graceful None fallback when key missing, never raises).
+    # - discovery_engine_factory is called per scan cycle with the scanner's
+    #   live session so the DiscoveryEngine participates in the same
+    #   transaction boundary as the scanner's own writes.
+    symbol_validator = SymbolValidator(api_key=settings.alpha_vantage_api_key)
+
+    def discovery_engine_factory(session):
+        return DiscoveryEngine(
+            db_session=session,
+            webhook_url=getattr(settings, "discord_webhook_pre_ipo", None),
+        )
+
     x_watchdog = XWatchdog(
         api_key=settings.xai_api_key,
         session_factory=get_session,
+        discovery_engine_factory=discovery_engine_factory,
+        symbol_validator=symbol_validator,
     )
     edgar_scanner = EdgarScanner(
         session_factory=get_session,
         targets=settings.edgar_targets,
+        discovery_engine_factory=discovery_engine_factory,
     )
-    polymarket_engine = PolymarketEngine(session_factory=get_session)
+    polymarket_engine = PolymarketEngine(
+        session_factory=get_session,
+        discovery_engine_factory=discovery_engine_factory,
+    )
 
     # Register scheduler jobs
     scheduler.add_job(

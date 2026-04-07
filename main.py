@@ -23,6 +23,12 @@ from blackpine_signals.db.engine import engine, get_session
 from blackpine_signals.db.models import Base, FusedSignal, IPOPipeline, WatchlistTicker
 from blackpine_signals.db.seed import seed_database
 from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine
+from blackpine_signals.ingestion.discovery_introspection import DiscoveryIntrospection
+from blackpine_signals.ingestion.discovery_research import (
+    DiscoveryResearchRunner,
+    resolve_last30days_script,
+    topics_for_day,
+)
 from blackpine_signals.ingestion.edgar_scanner import EdgarScanner
 from blackpine_signals.ingestion.polymarket_engine import PolymarketEngine
 from blackpine_signals.ingestion.price_engine import PriceEngine
@@ -40,6 +46,9 @@ price_engine: PriceEngine | None = None
 x_watchdog: XWatchdog | None = None
 edgar_scanner: EdgarScanner | None = None
 polymarket_engine: PolymarketEngine | None = None
+# SPEC-028B Task 4
+research_runner: DiscoveryResearchRunner | None = None
+introspection: DiscoveryIntrospection | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +90,41 @@ async def _job_polymarket_scan() -> None:
             logger.exception("[job:polymarket_scan] failed")
 
 
+# SPEC-028B Task 4 — discovery research + introspection jobs
+async def _job_discovery_research_slot(slot_idx: int) -> None:
+    """Run one of the 4 daily research topics (slot_idx in 0..3)."""
+    if research_runner is None:
+        return
+    topics = topics_for_day()
+    if slot_idx >= len(topics):
+        logger.warning("[job:discovery_research] slot %d out of range", slot_idx)
+        return
+    topic = topics[slot_idx]
+    try:
+        summary = await research_runner.run_topic(topic)
+        logger.info("[job:discovery_research] slot=%d %s", slot_idx, summary)
+    except Exception:
+        logger.exception("[job:discovery_research] slot=%d topic=%r failed", slot_idx, topic)
+
+
+def _job_discovery_introspection() -> None:
+    """Nightly 2 AM ET introspection pass."""
+    if introspection is None:
+        return
+    try:
+        summary = introspection.run()
+        logger.info("[job:discovery_introspection] %s", summary)
+    except Exception:
+        logger.exception("[job:discovery_introspection] failed")
+
+
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
 async def startup() -> None:
     global price_engine, x_watchdog, edgar_scanner, polymarket_engine
+    global research_runner, introspection
 
     # Create tables
     Base.metadata.create_all(bind=engine)
@@ -161,8 +199,57 @@ async def startup() -> None:
         replace_existing=True,
     )
 
+    # SPEC-028B Task 4 — Research Runner + Introspection (gated on flag)
+    jobs_registered = 4
+    if getattr(settings, "discovery_scheduler_enabled", False):
+        research_runner = DiscoveryResearchRunner(
+            session_factory=get_session,
+            discovery_engine_factory=discovery_engine_factory,
+            script_path=resolve_last30days_script(
+                getattr(settings, "last30days_script_path", "") or ""
+            ),
+        )
+        introspection = DiscoveryIntrospection(session_factory=get_session)
+
+        # 4 daily research slots at 08:00/08:30/09:00/09:30 ET (M-F only)
+        for slot_idx, (hour, minute) in enumerate(
+            [(8, 0), (8, 30), (9, 0), (9, 30)]
+        ):
+            scheduler.add_job(
+                _job_discovery_research_slot,
+                trigger=CronTrigger(
+                    day_of_week="mon-fri",
+                    hour=hour,
+                    minute=minute,
+                    timezone="America/New_York",
+                ),
+                id=f"discovery_research_slot_{slot_idx}",
+                kwargs={"slot_idx": slot_idx},
+                replace_existing=True,
+            )
+            jobs_registered += 1
+
+        # Nightly 02:00 ET introspection
+        scheduler.add_job(
+            _job_discovery_introspection,
+            trigger=CronTrigger(hour=2, minute=0, timezone="America/New_York"),
+            id="discovery_introspection",
+            replace_existing=True,
+        )
+        jobs_registered += 1
+        logger.info(
+            "SPEC-028B Task 4 discovery scheduler ENABLED — 4 research slots + nightly introspection registered."
+        )
+    else:
+        logger.info(
+            "SPEC-028B Task 4 discovery scheduler DISABLED (set DISCOVERY_SCHEDULER_ENABLED=true to enable)."
+        )
+
     scheduler.start()
-    logger.info("Black Pine Signals started on 127.0.0.1:8003 — 4 scheduler jobs registered.")
+    logger.info(
+        "Black Pine Signals started on 127.0.0.1:8003 — %d scheduler jobs registered.",
+        jobs_registered,
+    )
 
 
 @app.on_event("shutdown")

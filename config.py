@@ -53,6 +53,16 @@ class Settings(BaseSettings):
         "CoreWeave", "Databricks", "Stripe", "Canva", "Figma",
     ])
 
+    # SPEC-028B Task 4 — Discovery scheduler feature flag.
+    # When False, the /last30days research runs and nightly introspection
+    # jobs are NOT registered with APScheduler. Flip to True once external
+    # dependencies (ScrapeCreators credits) are confirmed live.
+    discovery_scheduler_enabled: bool = False
+
+    # SPEC-028B Task 4 — path to the /last30days skill script.
+    # Empty string = auto-detect by searching the known plugin locations.
+    last30days_script_path: str = ""
+
     model_config = {"env_file": str(Path(__file__).parent / ".env"), "extra": "ignore"}
 
 

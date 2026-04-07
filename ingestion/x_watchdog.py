@@ -1,7 +1,16 @@
 # /home/nodeuser/blackpine_core/blackpine_signals/ingestion/x_watchdog.py
 """
 Layer 2: X/FinTwit Watchdog — xAI Grok-powered monitoring.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md §4.2
+
+Governing docs:
+  /documents/2026-04-04-spec-028-black-pine-signals.md §4.2
+  /documents/2026-04-07-spec-028c-x-watchdog-responses-api-migration.md
+
+SPEC-028C (2026-04-07): Migrated from the deprecated
+`/v1/chat/completions` live-search path to the xAI Responses API
+(`POST /v1/responses`) with the built-in `x_search` tool. The old
+endpoint silently returned empty payloads after xAI retired implicit
+Live Search on chat completions (darkness since 2026-04-05).
 """
 from __future__ import annotations
 import json
@@ -19,14 +28,22 @@ from blackpine_signals.ingestion.discovery_engine import DiscoveryEngine
 from blackpine_signals.ingestion.symbol_validator import SymbolValidator
 
 logger = logging.getLogger("bps.x_watchdog")
-XAI_BASE = "https://api.x.ai/v1/chat/completions"
+
+# SPEC-028C: Responses API endpoint (replaces chat/completions live search).
+XAI_BASE = "https://api.x.ai/v1/responses"
+
+# SPEC-028C: Reasoning model with Responses API + x_search tool support.
+# Empirically validated 2026-04-07. Use reasoning.effort=low for cost control.
+XAI_MODEL = "grok-4.20-0309-reasoning"
+
 TICKER_PATTERN = re.compile(r"\$([A-Z]{1,5})\b")
 
-WATCHDOG_PROMPT = """Search recent X/Twitter posts from the following high-signal finance accounts about AI stocks, IPOs, and market-moving events. Return ONLY a JSON array of posts found. Each post object must have: handle, text, likes, reposts, url, posted_at (ISO 8601).
+WATCHDOG_PROMPT = """Use the x_search tool to find recent X/Twitter posts from high-signal finance accounts about AI stocks, IPOs, and market-moving events. Focus the search on these accounts and topics.
 
 Accounts to monitor: {accounts}
-Search for posts about: {topics}
-Return valid JSON only, no markdown fences. If no posts found, return [].
+Topics of interest: {topics}
+
+Return ONLY a JSON array of posts found — no markdown fences, no prose, no explanation. Each post object MUST have exactly these keys: handle, text, likes, reposts, url, posted_at (ISO-8601). If no posts found, return the empty array [].
 """
 
 DEFAULT_ACCOUNTS = [
@@ -46,18 +63,67 @@ DEFAULT_TOPICS = [
 ]
 
 def parse_grok_response(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract the assistant message JSON array from a Responses API payload.
+
+    SPEC-028C: The Responses API returns ``data["output"]`` as a list of
+    mixed-type items (tool calls, reasoning traces, and the final assistant
+    message). We walk the list, locate the ``type=="message"`` item (role
+    ``assistant``), grab the first ``output_text`` content block, and
+    JSON-decode its text. Backward-compat: if the payload still has the old
+    ``choices[0].message.content`` shape (e.g. in legacy fixtures), fall back
+    to that path so existing tests/mocks are not silently broken.
+    """
+    content: str | None = None
     try:
-        content = data["choices"][0]["message"]["content"]
+        # SPEC-028C: new Responses API shape
+        if "output" in data and isinstance(data["output"], list):
+            for item in data["output"]:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") != "message":
+                    continue
+                content_blocks = item.get("content") or []
+                for block in content_blocks:
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        content = block.get("text")
+                        break
+                if content is not None:
+                    break
+
+        # Backward-compat: legacy chat/completions shape
+        if content is None and "choices" in data:
+            content = data["choices"][0]["message"]["content"]
+
+        if content is None:
+            logger.warning(
+                "parse_grok_response: no output_text found in Responses payload | keys=%s",
+                list(data.keys()),
+            )
+            return []
+
         content = content.strip()
         if content.startswith("```"):
             content = re.sub(r"^```\w*\n?", "", content)
             content = re.sub(r"\n?```$", "", content)
-        return json.loads(content)
+
+        parsed = json.loads(content)
+        if not isinstance(parsed, list):
+            logger.warning(
+                "parse_grok_response: expected JSON array, got %s | first=%r",
+                type(parsed).__name__,
+                content[:200],
+            )
+            return []
+        return parsed
     except (KeyError, IndexError) as exc:
         logger.warning("parse_grok_response: missing field in Grok payload: %s | raw=%r", exc, data)
         return []
     except json.JSONDecodeError as exc:
-        logger.warning("parse_grok_response: JSONDecodeError: %s | content=%r", exc, content[:500] if 'content' in locals() else None)
+        logger.warning(
+            "parse_grok_response: JSONDecodeError: %s | content=%r",
+            exc,
+            content[:500] if content else None,
+        )
         return []
 
 def extract_tickers(text: str) -> list[str]:
@@ -81,14 +147,30 @@ class XWatchdog:
         self.symbol_validator = symbol_validator
 
     async def _query_grok(self) -> dict[str, Any]:
+        """Call the xAI Responses API with the `x_search` tool enabled.
+
+        SPEC-028C: Migrated from `/v1/chat/completions` (Live Search
+        deprecated) to `/v1/responses` with `tools=[{"type": "x_search"}]`.
+        Grok auto-invokes the internal `x_keyword_search` with its own query
+        derived from our prompt, then returns the structured tweet list in
+        the final assistant message.
+        """
         prompt = WATCHDOG_PROMPT.format(
             accounts=", ".join(f"@{a}" for a in self.accounts),
             topics=", ".join(self.topics),
         )
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(XAI_BASE, headers={"Authorization": f"Bearer {self.api_key}"},
-                json={"model": "grok-4-1-fast-non-reasoning",
-                      "messages": [{"role": "user", "content": prompt}], "temperature": 0.0})
+        body = {
+            "model": XAI_MODEL,
+            "input": [{"role": "user", "content": prompt}],
+            "tools": [{"type": "x_search"}],
+            "reasoning": {"effort": "low"},  # cost control
+        }
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                XAI_BASE,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=body,
+            )
             resp.raise_for_status()
             return resp.json()
 

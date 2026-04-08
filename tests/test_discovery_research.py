@@ -19,6 +19,7 @@ from blackpine_signals.ingestion.discovery_research import (
     COMPANY_STOPWORDS,
     DISCOVERY_TOPICS,
     DiscoveryResearchRunner,
+    TICKER_BLACKLIST,
     TOPICS_PER_DAY,
     extract_ipo_company_mentions,
     extract_tickers_from_text,
@@ -196,6 +197,77 @@ def test_extract_ipo_companies_rejects_news_outlets():
     assert "Techmeme" not in companies
     assert "Bloomberg" not in companies
     assert any("Databricks" in c for c in companies)
+
+
+# ---------------------------------------------------------------------------
+# 2026-04-08 ZHGP overnight-audit fixes
+# ---------------------------------------------------------------------------
+
+def test_ticker_blacklist_contains_critical_acronyms():
+    """Acronyms that triggered the IPO false-positive must be blacklisted."""
+    for sym in ("IPO", "AI", "API", "CEO", "CFO", "GPU", "LLM", "USA", "ETF"):
+        assert sym in TICKER_BLACKLIST, f"{sym!r} missing from TICKER_BLACKLIST"
+
+
+def test_extract_tickers_filters_blacklist():
+    """The exact failure mode from 2026-04-08 audit: $IPO must NOT extract."""
+    text = "$IPO season is here. $AI is hot. $CEO compensation rising. $NVDA is real."
+    tickers = extract_tickers_from_text(text)
+    assert "IPO" not in tickers
+    assert "AI" not in tickers
+    assert "CEO" not in tickers
+    assert "NVDA" in tickers  # real ticker still passes
+
+
+def test_extract_tickers_blacklist_does_not_break_valid_tickers():
+    """Make sure all the tickers we know are real still extract."""
+    text = "$NVDA $AVGO $TSM $MU $MSFT $GOOGL $META $NBIS $IREN $SOUN $PLTR $GEV $CEG"
+    tickers = extract_tickers_from_text(text)
+    expected = {"NVDA", "AVGO", "TSM", "MU", "MSFT", "GOOGL", "META", "NBIS", "IREN", "SOUN", "PLTR", "GEV", "CEG"}
+    assert tickers == expected
+
+
+def test_extract_ipo_companies_rejects_article_prefixes():
+    """'The US', 'The IPO', 'An AI startup' etc. must not be company names."""
+    text = (
+        "The US is leading AI investment. The IPO market is heating up. "
+        "An AI startup is going public. A company filed for S-1. "
+        "Their CFO confirmed. Our team filed. Databricks is real."
+    )
+    companies = extract_ipo_company_mentions(text)
+    for noise in ("The US", "The IPO", "An AI", "A company", "Their CFO", "Our team"):
+        assert noise not in companies, f"{noise!r} leaked through article filter"
+    assert any("Databricks" in c for c in companies)
+
+
+def test_extract_ipo_companies_rejects_audit_noise_words():
+    """The exact noise list pulled from the 2026-04-08 audit DB query."""
+    text = (
+        "Whoever files first wins. Same with the next batch. "
+        "Targeting AI startups. Tech is hot. Stocks are up. "
+        "Track these IPOs closely. Potentially a billion-dollar deal. "
+        "Valuations matter. Startups should file early. "
+        "Databricks filed for S-1 today."
+    )
+    companies = extract_ipo_company_mentions(text)
+    for noise in (
+        "Whoever", "Same", "Targeting", "Tech", "Stocks",
+        "Track", "Potentially", "Valuations", "Startups",
+    ):
+        assert noise not in companies, f"{noise!r} leaked through stopword filter"
+    assert any("Databricks" in c for c in companies)
+
+
+def test_real_companies_still_pass_after_all_filters():
+    """End-to-end: even with all filters in place, real names get through."""
+    text = (
+        "Databricks filed for S-1. CoreWeave is going public. "
+        "OpenAI may file for IPO next year. SpaceX is pre-IPO. "
+        "Anthropic filed Form D. Bytedance is going public."
+    )
+    companies = extract_ipo_company_mentions(text)
+    for real in ("Databricks", "CoreWeave", "OpenAI", "SpaceX", "Anthropic", "Bytedance"):
+        assert any(real in c for c in companies), f"{real!r} was wrongly rejected"
 
 
 # ---------------------------------------------------------------------------

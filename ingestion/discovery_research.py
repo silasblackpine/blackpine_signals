@@ -83,6 +83,24 @@ def topics_for_day(day: Optional[datetime] = None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 TICKER_PATTERN = re.compile(r"\$([A-Z]{1,5})\b")
+
+# Common all-caps acronyms that get $-prefixed in tweets/articles but are
+# NOT real ticker symbols. Identified 2026-04-08 from the first overnight
+# autonomous run, where `$IPO` accumulated to 40pt and tripped the
+# PROPOSE threshold. Hard-coded per CLAUDE.md Hard Rule #5.
+TICKER_BLACKLIST: frozenset[str] = frozenset({
+    # Acronyms that frequently appear with a $ in finance prose
+    "IPO", "AI", "API", "USA", "USD", "EUR", "GBP", "JPY", "CNY",
+    "CEO", "CFO", "CTO", "COO", "CMO", "VP", "EVP", "SVP",
+    "GPU", "CPU", "TPU", "LLM", "GPT", "RAG", "ML", "DL", "NLP",
+    "ETF", "ETN", "REIT", "SPAC", "IPO", "M", "B", "T",
+    "Q", "Y", "M2", "M1", "PE", "EV", "NAV", "EPS", "PNL",
+    "FTC", "SEC", "DOJ", "FDA", "FTC", "IRS", "DOE", "DOD",
+    "NYSE", "NASDAQ", "DOW", "SP", "SPX", "DJI", "VIX",
+    # Tech vendor / model abbreviations that aren't tradeable
+    "AWS", "GCP", "MS", "FB", "IG", "TT", "YT", "X", "TG",
+    "OS", "DB", "OS", "VM", "SDK", "API", "SQL", "NOSQL",
+})
 # Matches "Palantir", "Palantir Technologies", "CoreWeave", "SpaceX", "xAI Labs".
 # Leading uppercase + any letters, followed by up to 3 additional capitalized words.
 # The token pattern [A-Z][a-zA-Z]+ handles both PascalCase and CamelCase identifiers.
@@ -129,9 +147,13 @@ COMPANY_STOPWORDS: frozenset[str] = frozenset({
     "Sources", "Citations", "References", "Appendix", "Discussion",
     "Key Takeaways", "Top Posts", "Top Comments", "Top Results",
     "Research", "Insight", "Insights", "Findings Summary",
-    # Generic common words that get CamelCased in headers
     "Post", "Posts", "Thread", "Threads", "Comment", "Comments",
     "Likes", "Reposts", "Shares", "Views", "Mentions",
+    # Common-noun false positives identified 2026-04-08 from the first
+    # overnight autonomous run (1st-night ZHGP audit)
+    "Whoever", "Same", "Targeting", "Tech", "Stocks", "Track",
+    "Potentially", "Valuations", "Startups", "StockMarket", "Spac",
+    "Whoever", "VentureCapital", "Open Ai",
 })
 
 
@@ -166,10 +188,20 @@ def strip_markdown_headers(text: str) -> str:
 
 
 def extract_tickers_from_text(text: str) -> set[str]:
-    """Return unique $TICKERs found in a text blob."""
+    """Return unique $TICKERs found in a text blob.
+
+    Filters out TICKER_BLACKLIST entries (common all-caps acronyms like
+    $IPO, $AI, $CEO that appear with `$` in finance prose but are not
+    real tradeable symbols). Identified 2026-04-08 after the first
+    overnight ZHGP run promoted `IPO` to PROPOSED.
+    """
     if not text:
         return set()
-    return {m.group(1) for m in TICKER_PATTERN.finditer(text)}
+    return {
+        m.group(1)
+        for m in TICKER_PATTERN.finditer(text)
+        if m.group(1) not in TICKER_BLACKLIST
+    }
 
 
 def extract_ipo_company_mentions(text: str, window: int = 200) -> set[str]:
@@ -195,7 +227,12 @@ def extract_ipo_company_mentions(text: str, window: int = 200) -> set[str]:
             name = name_m.group(1).strip()
             if name in COMPANY_STOPWORDS:
                 continue
-            # Also reject if the first token is a stop-word (e.g.
+            # Reject matches starting with a definite/indefinite article
+            # ("The US", "The IPO", "An AI" etc.) — these are prose
+            # fragments, not entity names. Identified 2026-04-08 audit.
+            if name.startswith(("The ", "An ", "A ", "Their ", "Our ")):
+                continue
+            # Reject if the first token is a stop-word (e.g.
             # "Highlights Crusoe AI" where "Highlights" is a header label
             # that got glued onto a real company name).
             first_word = name.split()[0] if name else ""

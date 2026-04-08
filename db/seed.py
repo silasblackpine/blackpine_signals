@@ -167,6 +167,42 @@ INITIAL_IPO_TARGETS: list[dict] = [
         ],
         "confidence_score": 30,
     },
+    # ── Discovered 2026-04-08 via /last30days research ────────────────
+    {
+        "company_name": "Skims",
+        "stage": "ghost",
+        "estimated_valuation_low":  4_000_000_000,
+        "estimated_valuation_high": 6_000_000_000,
+        "lead_banks": [],
+        "strategic_investors": ["Imaginary Ventures", "Thrive Capital"],
+        "correlated_tickers": [],
+        "confidence_score": 25,
+    },
+    {
+        "company_name": "Replit",
+        "stage": "ghost",
+        "estimated_valuation_low":  3_000_000_000,
+        "estimated_valuation_high": 5_000_000_000,
+        "lead_banks": [],
+        "strategic_investors": ["a16z", "Khosla Ventures", "Coatue"],
+        "correlated_tickers": [
+            {"symbol": "MSFT", "relationship": "github_competitor"},
+            {"symbol": "GOOGL", "relationship": "cloud_partner"},
+        ],
+        "confidence_score": 30,
+    },
+    {
+        "company_name": "Sarvam AI",
+        "stage": "ghost",
+        "estimated_valuation_low":  1_500_000_000,
+        "estimated_valuation_high": 2_000_000_000,
+        "lead_banks": [],
+        "strategic_investors": ["NVIDIA", "Accel", "HCLTech"],
+        "correlated_tickers": [
+            {"symbol": "NVDA", "relationship": "investor_chip_supplier"},
+        ],
+        "confidence_score": 35,
+    },
 ]
 
 # ---------------------------------------------------------------------------

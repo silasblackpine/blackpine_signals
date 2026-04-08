@@ -33,6 +33,7 @@ from blackpine_signals.ingestion.edgar_scanner import EdgarScanner
 from blackpine_signals.ingestion.polymarket_engine import PolymarketEngine
 from blackpine_signals.ingestion.price_engine import PriceEngine
 from blackpine_signals.ingestion.symbol_validator import SymbolValidator
+from blackpine_signals.ingestion.whale_watcher import WhaleWatcher
 from blackpine_signals.ingestion.x_watchdog import XWatchdog
 
 logger = logging.getLogger("bps")
@@ -49,6 +50,9 @@ polymarket_engine: PolymarketEngine | None = None
 # SPEC-028B Task 4
 research_runner: DiscoveryResearchRunner | None = None
 introspection: DiscoveryIntrospection | None = None
+# 2026-04-08 — XMCP Whale Watcher (governing plan:
+# /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md)
+whale_watcher: WhaleWatcher | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +95,11 @@ async def _job_polymarket_scan() -> None:
 
 
 # SPEC-028B Task 4 — discovery research + introspection jobs
+# 2026-04-08: cadence reshape — 3 daily slots (06:00/13:00/20:00 ET, Mon-Sun).
+# Slot 0 (06:00 ET) runs the XMCP Whale Watcher inline first; its summary
+# is injected as additional context into that slot's /last30days prompt.
 async def _job_discovery_research_slot(slot_idx: int) -> None:
-    """Run one of the 4 daily research topics (slot_idx in 0..3)."""
+    """Run one of the 3 daily research topics (slot_idx in 0..2)."""
     if research_runner is None:
         return
     topics = topics_for_day()
@@ -100,8 +107,27 @@ async def _job_discovery_research_slot(slot_idx: int) -> None:
         logger.warning("[job:discovery_research] slot %d out of range", slot_idx)
         return
     topic = topics[slot_idx]
+
+    # Whale Watcher inline pre-flight — slot 0 (06:00 ET) only.
+    extra_context = ""
+    if slot_idx == 0 and whale_watcher is not None:
+        try:
+            ww = await whale_watcher.run()
+            ww_log = {k: v for k, v in ww.items() if k != "summary_text"}
+            logger.info("[job:whale_watcher] %s", ww_log)
+            if ww["status"] == "ok" and ww["summary_text"]:
+                extra_context = ww["summary_text"]
+            elif ww["status"] == "credits_depleted":
+                logger.info(
+                    "[job:whale_watcher] Awaiting X API Credits — proceeding without 24h context"
+                )
+        except Exception:
+            logger.exception(
+                "[job:whale_watcher] unexpected failure — proceeding without context"
+            )
+
     try:
-        summary = await research_runner.run_topic(topic)
+        summary = await research_runner.run_topic(topic, extra_context=extra_context)
         logger.info("[job:discovery_research] slot=%d %s", slot_idx, summary)
     except Exception:
         logger.exception("[job:discovery_research] slot=%d topic=%r failed", slot_idx, topic)
@@ -124,7 +150,7 @@ def _job_discovery_introspection() -> None:
 @app.on_event("startup")
 async def startup() -> None:
     global price_engine, x_watchdog, edgar_scanner, polymarket_engine
-    global research_runner, introspection
+    global research_runner, introspection, whale_watcher
 
     # Create tables
     Base.metadata.create_all(bind=engine)
@@ -211,14 +237,33 @@ async def startup() -> None:
         )
         introspection = DiscoveryIntrospection(session_factory=get_session)
 
-        # 4 daily research slots at 08:00/08:30/09:00/09:30 ET (M-F only)
+        # 2026-04-08 — XMCP Whale Watcher (gated on key presence). Empty key
+        # disables the module entirely; the 06:00 slot then runs without 24h
+        # X context (graceful no-op).
+        if getattr(settings, "bpl_xmcp_api_key", "") :
+            whale_watcher = WhaleWatcher(
+                gateway_url=getattr(
+                    settings, "bpl_xmcp_gateway_url",
+                    "http://100.123.117.38:8010",
+                ),
+                api_key=settings.bpl_xmcp_api_key,
+                session_factory=get_session,
+                discovery_engine_factory=discovery_engine_factory,
+            )
+            logger.info("Whale Watcher ENABLED — XMCP gateway %s", whale_watcher.gateway_url)
+        else:
+            logger.info(
+                "Whale Watcher DISABLED — BPL_XMCP_API_KEY not set; 06:00 slot will run without 24h X context"
+            )
+
+        # 3 daily research slots at 06:00 / 13:00 / 20:00 ET (Mon-Sun)
         for slot_idx, (hour, minute) in enumerate(
-            [(8, 0), (8, 30), (9, 0), (9, 30)]
+            [(6, 0), (13, 0), (20, 0)]
         ):
             scheduler.add_job(
                 _job_discovery_research_slot,
                 trigger=CronTrigger(
-                    day_of_week="mon-fri",
+                    day_of_week="mon-sun",
                     hour=hour,
                     minute=minute,
                     timezone="America/New_York",
@@ -238,7 +283,8 @@ async def startup() -> None:
         )
         jobs_registered += 1
         logger.info(
-            "SPEC-028B Task 4 discovery scheduler ENABLED — 4 research slots + nightly introspection registered."
+            "SPEC-028B Task 4 discovery scheduler ENABLED — 3 daily research slots "
+            "(06:00/13:00/20:00 ET, Mon-Sun) + Whale Watcher inline + nightly introspection registered."
         )
     else:
         logger.info(

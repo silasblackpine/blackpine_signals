@@ -43,18 +43,72 @@ def test_topics_for_day_deterministic():
     assert topics_for_day(d) == topics_for_day(d)
 
 
-def test_topics_for_day_rotation_covers_pool():
-    """Two consecutive days must cover the entire 8-topic pool."""
-    d1 = datetime(2026, 4, 6, tzinfo=timezone.utc)
-    d2 = datetime(2026, 4, 7, tzinfo=timezone.utc)
-    combined = set(topics_for_day(d1)) | set(topics_for_day(d2))
+def test_topics_for_day_sliding_window_full_coverage():
+    """2026-04-08 cadence reshape: with K=3 and P=8 the sliding window
+    covers the entire pool in ceil(8/3) = 3 consecutive days."""
+    days = [
+        datetime(2026, 4, 6, tzinfo=timezone.utc),
+        datetime(2026, 4, 7, tzinfo=timezone.utc),
+        datetime(2026, 4, 8, tzinfo=timezone.utc),
+    ]
+    combined: set[str] = set()
+    for d in days:
+        combined |= set(topics_for_day(d))
     assert combined == set(DISCOVERY_TOPICS)
 
 
 def test_topics_for_day_no_overlap_consecutive_days():
+    """Step=K=3 and pool=8 → consecutive days never share a topic."""
     d1 = datetime(2026, 4, 6, tzinfo=timezone.utc)
     d2 = datetime(2026, 4, 7, tzinfo=timezone.utc)
     assert set(topics_for_day(d1)).isdisjoint(set(topics_for_day(d2)))
+
+
+def test_topics_for_day_sliding_window_wraps():
+    """The window must wrap cleanly when the start index nears pool end."""
+    # Find a day whose start index is 6 (so window is [6,7,0])
+    from datetime import date, timedelta
+    base = date(2026, 4, 6)
+    found = False
+    for delta in range(0, 16):
+        d = datetime.combine(base + timedelta(days=delta), datetime.min.time(), tzinfo=timezone.utc)
+        topics = topics_for_day(d)
+        if topics == [DISCOVERY_TOPICS[6], DISCOVERY_TOPICS[7], DISCOVERY_TOPICS[0]]:
+            found = True
+            break
+    assert found, "no wrap-around day found in 16-day window — sliding window broken"
+
+
+def test_topics_for_day_resilient_to_pool_resize(monkeypatch):
+    """Sliding window must not crash on a smaller pool than TOPICS_PER_DAY."""
+    from blackpine_signals.ingestion import discovery_research as dr
+    monkeypatch.setattr(dr, "DISCOVERY_TOPICS", ["only_one"])
+    out = dr.topics_for_day(datetime(2026, 4, 8, tzinfo=timezone.utc))
+    assert out == ["only_one"]
+
+
+def test_run_topic_extra_context_injection(db_session, monkeypatch):
+    """Whale Watcher summary must be appended to the topic argument."""
+    from blackpine_signals.ingestion import discovery_research as dr
+
+    captured: dict = {}
+
+    async def _fake_run_last30days(topic, *, script_path=None, timeout_seconds=300.0):
+        captured["topic"] = topic
+        return ""  # empty markdown — no tickers/companies extracted
+
+    monkeypatch.setattr(dr, "run_last30days", _fake_run_last30days)
+
+    runner = dr.DiscoveryResearchRunner(
+        session_factory=lambda: db_session,
+        discovery_engine_factory=lambda s: DiscoveryEngine(db_session=s),
+    )
+    extra = "Top mentioned tickers: $NVDA (x3), $PLTR (x2)."
+    asyncio.run(runner.run_topic("AI stocks 2026", extra_context=extra))
+
+    assert "AI stocks 2026" in captured["topic"]
+    assert "Whale Watcher context" in captured["topic"]
+    assert extra in captured["topic"]
 
 
 # ---------------------------------------------------------------------------

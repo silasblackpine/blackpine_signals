@@ -63,19 +63,32 @@ DISCOVERY_TOPICS: list[str] = [
     "AI SPAC merger 2026",
 ]
 
-TOPICS_PER_DAY: int = 4
+# 2026-04-08: cadence reshape — 3 slots/day at 06:00/13:00/20:00 ET, Mon-Sun.
+# Governing plan: /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md
+TOPICS_PER_DAY: int = 3
 
 
 def topics_for_day(day: Optional[datetime] = None) -> list[str]:
-    """Return the 4 topics to research on a given date.
+    """Return today's research topics via a sliding window over the full pool.
 
-    Rotation is deterministic on day-of-year modulo (len(pool)/TOPICS_PER_DAY).
-    With 8 topics / 4 per day, we cycle through the whole pool every 2 days.
+    For any pool length P and any TOPICS_PER_DAY = K (K capped at P), day N
+    selects indices [N*K mod P, (N*K+1) mod P, ..., (N*K+K-1) mod P]. The
+    window wraps cleanly so the system is resilient to any pool size.
+
+    With P=8, K=3 the rotation covers the full pool in ceil(8/3) = 3 days:
+        day 0 → [0,1,2]
+        day 1 → [3,4,5]
+        day 2 → [6,7,0]
+        day 3 → [1,2,3]
+        ...
     """
+    pool_len = len(DISCOVERY_TOPICS)
+    if pool_len == 0:
+        return []
+    k = min(TOPICS_PER_DAY, pool_len)
     ref = (day or datetime.now(timezone.utc)).date()
-    day_idx = ref.toordinal() % (len(DISCOVERY_TOPICS) // TOPICS_PER_DAY)
-    start = day_idx * TOPICS_PER_DAY
-    return DISCOVERY_TOPICS[start : start + TOPICS_PER_DAY]
+    start = (ref.toordinal() * k) % pool_len
+    return [DISCOVERY_TOPICS[(start + i) % pool_len] for i in range(k)]
 
 
 # ---------------------------------------------------------------------------
@@ -339,8 +352,15 @@ class DiscoveryResearchRunner:
         self.script_path = script_path
         self.timeout_seconds = timeout_seconds
 
-    async def run_topic(self, topic: str) -> dict:
-        """Run one topic end-to-end. Returns a summary dict for logging."""
+    async def run_topic(self, topic: str, extra_context: str = "") -> dict:
+        """Run one topic end-to-end. Returns a summary dict for logging.
+
+        2026-04-08: ``extra_context`` (Whale Watcher summary etc.) is appended
+        to the topic string passed to ``/last30days``. The skill takes the
+        topic as a single CLI argument; concatenation is the cleanest
+        injection path that requires no skill modification. Capped at 1500
+        chars defensively.
+        """
         summary: dict = {
             "topic": topic,
             "status": "ok",
@@ -348,9 +368,17 @@ class DiscoveryResearchRunner:
             "companies_fed": 0,
             "error": None,
         }
+        if extra_context:
+            extra_context = extra_context[:1500]
+            effective_topic = (
+                f"{topic}\n\nAdditional 24h Whale Watcher context "
+                f"(high-signal X accounts):\n{extra_context}"
+            )
+        else:
+            effective_topic = topic
         try:
             md_output = await run_last30days(
-                topic,
+                effective_topic,
                 script_path=self.script_path,
                 timeout_seconds=self.timeout_seconds,
             )

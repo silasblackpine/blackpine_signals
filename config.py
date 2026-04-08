@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     # Empty string = auto-detect by searching the known plugin locations.
     last30days_script_path: str = ""
 
+    # 2026-04-08 — XMCP Whale Watcher (governing plan:
+    # /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md).
+    # Empty key disables the Whale Watcher path; the 06:00 ET research slot
+    # then runs without 24h X context (graceful no-op).
+    bpl_xmcp_api_key: str = ""
+    bpl_xmcp_gateway_url: str = "http://100.123.117.38:8010"
+
     model_config = {"env_file": str(Path(__file__).parent / ".env"), "extra": "ignore"}
 
 

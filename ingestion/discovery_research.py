@@ -298,12 +298,17 @@ async def run_last30days(
     if resolved is None:
         raise RuntimeError("last30days skill script not found on disk")
 
+    # 2026-04-09: --store flag dropped to work around a /last30days
+    # v2.9.6 bug in store.py:341 (`max(int, NoneType)` TypeError on
+    # duplicate findings with NULL engagement_score). We never read the
+    # skill's local SQLite (`~/.local/share/last30days/research.db`) —
+    # we parse stdout markdown directly — so dropping --store is a
+    # zero-loss fix that bypasses the persistence path entirely.
     cmd = [
         "python3",
         str(resolved),
         "--emit", "md",
         "--quick",
-        "--store",
         "--days", str(days),
         topic,
     ]

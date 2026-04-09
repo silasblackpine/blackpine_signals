@@ -233,8 +233,19 @@ def extract_ipo_company_mentions(text: str, window: int = 200) -> set[str]:
     cleaned = strip_markdown_headers(text)
     matches: set[str] = set()
     for ipo_m in IPO_CONTEXT.finditer(cleaned):
-        start = max(0, ipo_m.start() - window)
-        end = min(len(cleaned), ipo_m.end() + window)
+        raw_start = max(0, ipo_m.start() - window)
+        raw_end = min(len(cleaned), ipo_m.end() + window)
+        # 2026-04-09 fix: snap window to whitespace boundaries so the
+        # chunk slice never bisects a word. Without this, Python's `\b`
+        # matches the artificial chunk-end and the regex captures
+        # truncated halves like "Targeti" or "Scor" (observed in the
+        # 2026-04-09 manual run audit).
+        start = raw_start
+        while start > 0 and not cleaned[start - 1].isspace():
+            start -= 1
+        end = raw_end
+        while end < len(cleaned) and not cleaned[end].isspace():
+            end += 1
         chunk = cleaned[start:end]
         for name_m in COMPANY_PATTERN.finditer(chunk):
             name = name_m.group(1).strip()

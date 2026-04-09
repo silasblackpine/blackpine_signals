@@ -312,6 +312,36 @@ def test_extract_ipo_companies_rejects_audit_noise_words():
     assert any("Databricks" in c for c in companies)
 
 
+def test_extract_ipo_companies_snaps_window_to_word_boundary():
+    """2026-04-09 fix: chunk slice must not bisect a word.
+
+    Construct a long text where the IPO_CONTEXT keyword sits exactly
+    such that a naive 200-char window would slice "Targeting" mid-word
+    into "Targeti". The boundary-snap must capture the full token (and
+    then the existing stopword filter rejects it as expected).
+    """
+    # 200 chars of pad, then "Targeting AI startups" extending past the
+    # window boundary, then the IPO keyword close enough to be in scope.
+    pad = "x " * 100  # 200 chars exactly
+    text = pad + "Targeting AI startups via Form D filings"
+    companies = extract_ipo_company_mentions(text, window=200)
+    # Truncated artifacts must NOT appear
+    assert "Targeti" not in companies
+    assert "Scor" not in companies
+    # The full token "Targeting" was previously in the stopword list and
+    # should still be rejected by that filter (proves we're now seeing
+    # the *full* word, not a slice).
+    assert "Targeting" not in companies
+
+
+def test_extract_ipo_companies_window_snap_does_not_lose_real_companies():
+    """The boundary snap must not regress real-company extraction."""
+    pad = "x " * 100
+    text = pad + "Databricks filed an S-1 this morning"
+    companies = extract_ipo_company_mentions(text, window=200)
+    assert any("Databricks" in c for c in companies)
+
+
 def test_real_companies_still_pass_after_all_filters():
     """End-to-end: even with all filters in place, real names get through."""
     text = (

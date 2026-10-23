@@ -1,6 +1,5 @@
 """
 Black Pine Signals — Daemon Entrypoint
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md
 
 Runs FastAPI (port 8003, 127.0.0.1) with APScheduler for ingestion jobs.
 Wires: PriceEngine, XWatchdog, EdgarScanner, PolymarketEngine, Stripe billing.
@@ -50,8 +49,7 @@ polymarket_engine: PolymarketEngine | None = None
 # SPEC-028B Task 4
 research_runner: DiscoveryResearchRunner | None = None
 introspection: DiscoveryIntrospection | None = None
-# 2026-04-08 — XMCP Whale Watcher (governing plan:
-# /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md)
+# 2026-04-08 — XMCP Whale Watcher
 whale_watcher: WhaleWatcher | None = None
 
 

@@ -9,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: blackpine_signals
       POSTGRES_USER: bps_user
-      POSTGRES_PASSWORD: bps_pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - bps_pgdata:/var/lib/postgresql/data
     healthcheck:

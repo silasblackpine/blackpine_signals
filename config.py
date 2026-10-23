@@ -1,6 +1,5 @@
 """
 Centralized configuration for Black Pine Signals.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ class Settings(BaseSettings):
     """All config sourced from env vars or .env file."""
 
     # Database
-    database_url: str = "postgresql://bps_user:bps_pass@127.0.0.1:5434/blackpine_signals"
+    database_url: str = "postgresql://localhost:5434/blackpine_signals"  # set DATABASE_URL (with your own credentials) in .env
 
     # Alpha Vantage
     alpha_vantage_api_key: str = ""
@@ -63,8 +62,7 @@ class Settings(BaseSettings):
     # Empty string = auto-detect by searching the known plugin locations.
     last30days_script_path: str = ""
 
-    # 2026-04-08 — XMCP Whale Watcher (governing plan:
-    # /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md).
+    # 2026-04-08 — XMCP Whale Watcher.
     # Empty key disables the Whale Watcher path; the 06:00 ET research slot
     # then runs without 24h X context (graceful no-op).
     bpl_xmcp_api_key: str = ""

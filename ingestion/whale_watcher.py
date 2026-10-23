@@ -8,9 +8,6 @@ newly detected tickers into the BPS Discovery Engine, and emits a compact
 summary string suitable for injection into the 06:00 ET /last30days research
 prompt.
 
-Governing plan:
-  /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md
-
 Hard rules honored:
   #3 (no boundary violations) — sentiment is keyword-only, anomaly is
       batch-relative, no historical baselines, no quant signal generation.

@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/billing/stripe_handler.py
+# blackpine_signals/billing/stripe_handler.py
 """Stripe subscription handler. Governing doc: SPEC-028 §9"""
 from __future__ import annotations
 import logging

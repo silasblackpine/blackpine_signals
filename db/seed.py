@@ -1,6 +1,5 @@
 """
 Seed data for Black Pine Signals database.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md
 
 Safe to re-run — checks for existing data before inserting.
 """

@@ -1,8 +1,5 @@
 """
 Tests for the XMCP Whale Watcher.
-
-Governing plan:
-  /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md
 """
 from __future__ import annotations
 

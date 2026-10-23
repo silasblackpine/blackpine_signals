@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ingestion/x_watchdog.py
+# blackpine_signals/ingestion/x_watchdog.py
 """
 Layer 2: X/FinTwit Watchdog — xAI Grok-powered monitoring.
 

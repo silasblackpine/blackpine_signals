@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ipo/pipeline.py
+# blackpine_signals/ipo/pipeline.py
 """6-Stage IPO Pipeline State Machine. Governing doc: SPEC-028 §6"""
 from __future__ import annotations
 import logging

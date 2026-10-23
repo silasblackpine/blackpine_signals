@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/delivery/discord_bot.py
+# blackpine_signals/delivery/discord_bot.py
 """Discord delivery — webhook dispatch. Governing doc: SPEC-028 §8"""
 from __future__ import annotations
 import asyncio

@@ -64,7 +64,6 @@ DISCOVERY_TOPICS: list[str] = [
 ]
 
 # 2026-04-08: cadence reshape — 3 slots/day at 06:00/13:00/20:00 ET, Mon-Sun.
-# Governing plan: /home/nodeuser/documents/2026-04-08-bps-cadence-whale-watcher.md
 TOPICS_PER_DAY: int = 3
 
 
@@ -276,9 +275,12 @@ def extract_ipo_company_mentions(text: str, window: int = 200) -> set[str]:
 # /last30days subprocess wrapper
 # ---------------------------------------------------------------------------
 
+_CLAUDE_PLUGINS_DIR = Path(
+    os.getenv("CLAUDE_PLUGINS_DIR", str(Path.home() / ".claude" / "plugins"))
+)
 DEFAULT_SKILL_PATHS: list[Path] = [
-    Path("/home/nodeuser/.claude/plugins/marketplaces/last30days-skill/scripts/last30days.py"),
-    Path("/home/nodeuser/.claude/plugins/cache/last30days-skill/last30days/2.9.6/scripts/last30days.py"),
+    _CLAUDE_PLUGINS_DIR / "marketplaces/last30days-skill/scripts/last30days.py",
+    _CLAUDE_PLUGINS_DIR / "cache/last30days-skill/last30days/2.9.6/scripts/last30days.py",
 ]
 
 

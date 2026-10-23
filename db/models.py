@@ -1,6 +1,5 @@
 """
 ORM models for Black Pine Signals — 10 tables.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md
 
 Note: JSON is used instead of JSONB for SQLite test compatibility.
 On PostgreSQL, JSON columns behave identically to JSONB for our use case.

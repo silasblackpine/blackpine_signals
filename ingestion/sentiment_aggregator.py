@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ingestion/sentiment_aggregator.py
+# blackpine_signals/ingestion/sentiment_aggregator.py
 """Layer 5: Cross-source Signal Fusion Engine. Governing doc: SPEC-028 §4.5"""
 from __future__ import annotations
 import logging

@@ -1,7 +1,6 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ingestion/price_engine.py
+# blackpine_signals/ingestion/price_engine.py
 """
 Layer 1: Price Engine — Alpha Vantage OHLCV polling.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md
 """
 from __future__ import annotations
 import logging

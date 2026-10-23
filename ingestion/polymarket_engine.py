@@ -1,8 +1,10 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ingestion/polymarket_engine.py
+# blackpine_signals/ingestion/polymarket_engine.py
 """Layer 4: Polymarket Correlation Engine. Governing doc: SPEC-028 §4.4"""
 from __future__ import annotations
 import json
 import logging
+import os
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Callable
 from sqlalchemy.orm import Session
@@ -57,7 +59,12 @@ class PolymarketEngine:
     async def _get_poller(self):
         if self._poller is None:
             import sys
-            sys.path.insert(0, "/home/nodeuser/blackpine_core")
+            core_dir = os.getenv(
+                "BLACKPINE_CORE_DIR",
+                str(Path(__file__).resolve().parents[2]),
+            )
+            if core_dir not in sys.path:
+                sys.path.insert(0, core_dir)
             from intelligence.polymarket_poller import PolymarketPoller
             self._poller = PolymarketPoller()
         return self._poller

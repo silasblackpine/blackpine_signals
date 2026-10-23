@@ -1,6 +1,5 @@
 """
 Source Credibility Weighting System — the BPL Edge.
-Governing doc: /home/nodeuser/documents/2026-04-04-spec-028-black-pine-signals.md §5
 """
 from __future__ import annotations
 import re

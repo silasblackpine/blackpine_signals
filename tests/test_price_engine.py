@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/tests/test_price_engine.py
+# blackpine_signals/tests/test_price_engine.py
 """Tests for price_engine.py"""
 from unittest.mock import AsyncMock, patch
 import pytest

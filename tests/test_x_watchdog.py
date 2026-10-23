@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/tests/test_x_watchdog.py
+# blackpine_signals/tests/test_x_watchdog.py
 """Tests for X Watchdog and credibility system."""
 from blackpine_signals.models.credibility import classify_signal, compute_weighted_score, get_credibility_tier
 from blackpine_signals.ingestion.x_watchdog import parse_grok_response

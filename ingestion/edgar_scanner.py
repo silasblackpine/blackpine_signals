@@ -1,4 +1,4 @@
-# /home/nodeuser/blackpine_core/blackpine_signals/ingestion/edgar_scanner.py
+# blackpine_signals/ingestion/edgar_scanner.py
 """Layer 3: EDGAR Scanner — SEC filing detection. Governing doc: SPEC-028 §4.3"""
 from __future__ import annotations
 import logging

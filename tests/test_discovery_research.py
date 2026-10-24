@@ -21,6 +21,7 @@ from blackpine_signals.ingestion.discovery_research import (
     DiscoveryResearchRunner,
     TICKER_BLACKLIST,
     TOPICS_PER_DAY,
+    build_last30days_env,
     extract_ipo_company_mentions,
     extract_tickers_from_text,
     strip_markdown_headers,
@@ -498,3 +499,21 @@ def test_research_runner_swallows_handoff_errors(db_session, monkeypatch):
     # One ticker exploded, the other two should have survived
     assert summary["tickers_fed"] == 2
     assert summary["status"] == "ok"
+
+
+def test_last30days_env_strips_secrets():
+    """Third-party subprocess must not inherit app secrets."""
+    env = build_last30days_env({
+        "PATH": "/usr/bin",
+        "HOME": "/home/bps",
+        "STRIPE_SECRET_KEY": "sk_live_x",
+        "DISCORD_BOT_TOKEN": "tok",
+        "DATABASE_URL": "postgresql://u:p@h/db",
+        "SCRAPECREATORS_API_KEY": "sc",
+        "LAST30DAYS_ENV_PASSTHROUGH": " SCRAPECREATORS_API_KEY , MISSING_VAR",
+    })
+    assert env == {
+        "PATH": "/usr/bin",
+        "HOME": "/home/bps",
+        "SCRAPECREATORS_API_KEY": "sc",
+    }

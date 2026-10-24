@@ -284,6 +284,23 @@ DEFAULT_SKILL_PATHS: list[Path] = [
 ]
 
 
+# The skill is third-party code. Never hand it our process env (Stripe,
+# Discord, DB creds) — only locale/path basics plus an explicit opt-in list
+# from LAST30DAYS_ENV_PASSTHROUGH (comma-separated var names).
+_SUBPROCESS_ENV_BASE = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TZ")
+
+
+def build_last30days_env(environ: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """Return a minimal environment for the /last30days subprocess."""
+    src = os.environ if environ is None else environ
+    extra = [
+        name.strip()
+        for name in src.get("LAST30DAYS_ENV_PASSTHROUGH", "").split(",")
+        if name.strip()
+    ]
+    return {k: src[k] for k in (*_SUBPROCESS_ENV_BASE, *extra) if k in src}
+
+
 def resolve_last30days_script(override: str = "") -> Optional[Path]:
     """Return the first existing path from override or DEFAULT_SKILL_PATHS."""
     if override:
@@ -331,6 +348,7 @@ async def run_last30days(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=build_last30days_env(),
     )
     try:
         stdout, stderr = await asyncio.wait_for(

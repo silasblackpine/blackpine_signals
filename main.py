@@ -240,10 +240,7 @@ async def startup() -> None:
         # X context (graceful no-op).
         if getattr(settings, "bpl_xmcp_api_key", "") :
             whale_watcher = WhaleWatcher(
-                gateway_url=getattr(
-                    settings, "bpl_xmcp_gateway_url",
-                    "http://100.123.117.38:8010",
-                ),
+                gateway_url=settings.bpl_xmcp_gateway_url,
                 api_key=settings.bpl_xmcp_api_key,
                 session_factory=get_session,
                 discovery_engine_factory=discovery_engine_factory,

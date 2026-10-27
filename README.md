@@ -78,10 +78,12 @@ config.py     Settings loaded from environment / .env
 
 2. **Configure the environment**
    ```bash
-   cp blackpine_signals/.env.template blackpine_signals/.env
+   cp blackpine_signals/.env.example blackpine_signals/.env
    ```
-   Fill in your own values:
-   - `DATABASE_URL`: your Postgres connection string. Use your own username and a strong password, and set the same password in `docker-compose.yml`.
+   Fill in your own values. `.env` is gitignored; only the placeholder file is committed.
+   - `POSTGRES_PASSWORD`: password for the Postgres role. Docker Compose reads it from the environment (`POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}` in `docker-compose.yml`). Compose also loads the project `.env` file for this substitution.
+   - `DATABASE_URL`: Postgres connection string. Use the same password as `POSTGRES_PASSWORD`.
+   - `BPL_XMCP_GATEWAY_URL`: XMCP gateway for Whale Watcher. When unset, the app defaults to `http://localhost:8010`.
    - `ALPHA_VANTAGE_API_KEY`, `XAI_API_KEY`: data source keys
    - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_QUANT`: only needed for billing
    - `DISCORD_WEBHOOK_*`, `DISCORD_BOT_TOKEN`: only needed for Discord delivery

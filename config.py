@@ -66,7 +66,8 @@ class Settings(BaseSettings):
     # Empty key disables the Whale Watcher path; the 06:00 ET research slot
     # then runs without 24h X context (graceful no-op).
     bpl_xmcp_api_key: str = ""
-    bpl_xmcp_gateway_url: str = "http://100.123.117.38:8010"
+    # Override with BPL_XMCP_GATEWAY_URL. Defaults to localhost.
+    bpl_xmcp_gateway_url: str = "http://localhost:8010"
 
     model_config = {"env_file": str(Path(__file__).parent / ".env"), "extra": "ignore"}
 

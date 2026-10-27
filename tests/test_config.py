@@ -14,6 +14,7 @@ def test_settings_defaults():
     assert s.signal_critical_threshold == 80.0
     assert len(s.edgar_targets) == 10
     assert "Anthropic" in s.edgar_targets
+    assert s.bpl_xmcp_gateway_url == "http://localhost:8010"
 
 
 def test_settings_override():

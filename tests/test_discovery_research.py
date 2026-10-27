@@ -506,7 +506,7 @@ def test_last30days_env_strips_secrets():
     env = build_last30days_env({
         "PATH": "/usr/bin",
         "HOME": "/home/bps",
-        "STRIPE_SECRET_KEY": "sk_live_x",
+        "STRIPE_SECRET_KEY": "sk_test_dummy",
         "DISCORD_BOT_TOKEN": "tok",
         "DATABASE_URL": "postgresql://u:p@h/db",
         "SCRAPECREATORS_API_KEY": "sc",

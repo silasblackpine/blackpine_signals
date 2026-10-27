@@ -2,7 +2,7 @@
 2026-04-08 — XMCP Whale Watcher.
 
 Pulls the last 24h of X/Twitter posts from a curated allowlist of high-signal
-finance accounts via the bpl-xmcp-gateway (Tailscale 100.123.117.38:8010),
+finance accounts via the bpl-xmcp-gateway (BPL_XMCP_GATEWAY_URL),
 runs lightweight in-module sentiment + batch-relative anomaly detection, feeds
 newly detected tickers into the BPS Discovery Engine, and emits a compact
 summary string suitable for injection into the 06:00 ET /last30days research
